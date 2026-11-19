@@ -842,8 +842,9 @@ if (profile.goatcounter) {
   fetch(`${base}/counter/TOTAL.json`)
     .then((r) => (r.ok ? r.json() : null))
     .then((d) => {
-      if (!d || d.count == null) return;
-      document.getElementById('visits-count').textContent = d.count;
+      const n = d && (d.count_unique ?? d.count);
+      if (n == null) return;
+      document.getElementById('visits-count').textContent = n;
       document.getElementById('visits').hidden = false;
     })
     .catch(() => {});
