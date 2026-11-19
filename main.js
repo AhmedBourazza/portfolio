@@ -829,6 +829,26 @@ document.getElementById('s-instagram').href = profile.socials.instagram;
 document.getElementById('s-mail').href = `mailto:${profile.email}`;
 document.title = `${profile.name} — Portfolio`;
 
+// ---------- Visitor counter (GoatCounter) ----------
+if (profile.goatcounter) {
+  const base = `https://${profile.goatcounter}.goatcounter.com`;
+  // records this visit (GoatCounter ignores localhost automatically)
+  const s = document.createElement('script');
+  s.async = true;
+  s.src = 'https://gc.zgo.at/count.js';
+  s.dataset.goatcounter = `${base}/count`;
+  document.head.appendChild(s);
+  // shows the total number of visits for the whole site
+  fetch(`${base}/counter/TOTAL.json`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      if (!d || d.count == null) return;
+      document.getElementById('visits-count').textContent = d.count;
+      document.getElementById('visits').hidden = false;
+    })
+    .catch(() => {});
+}
+
 // ---------- Boucle ----------
 function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;

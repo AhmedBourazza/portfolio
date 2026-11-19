@@ -62,6 +62,9 @@ export const profile = {
   cv: 'https://ahmedbourazza.github.io/CV-Ahmed-Bourazza.pdf',
   email: 'ahmed.bourazza.pro@gmail.com',
   phone: '+33 7 51 56 87 31',
+  // Visitor counter: your GoatCounter code (the "xxx" in xxx.goatcounter.com).
+  // Leave empty to hide the counter.
+  goatcounter: '',
   socials: {
     github: 'https://github.com/Ahmedbourazza',
     linkedin: 'https://www.linkedin.com/in/ahmed-bourazza-06618b244/',
