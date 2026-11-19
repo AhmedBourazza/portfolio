@@ -469,7 +469,12 @@ const deskX = -0.8, deskZ = -4.35;
   // Easter egg: clicking the little planet shows the visitor counter
   if (profile.goatcounter) {
     planet.userData.action = 'stats';
+    // The planet is only ~10px on screen: an invisible sphere ~4.5x larger makes it easy to click
+    const hit = new THREE.Mesh(new THREE.SphereGeometry(0.6, 12, 12), new THREE.MeshBasicMaterial({ visible: false }));
+    planet.add(hit);
     clickables.push(planet);
+    // gentle pulse of its ring so curious visitors notice it
+    animated.push((t) => pRing.scale.setScalar(1 + Math.max(0, Math.sin(t * 2.2)) * 0.12));
   }
   animated.push((t) => { planet.rotation.y = t * 0.6; pRing.rotation.z = t * 0.4; });
 
