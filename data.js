@@ -42,14 +42,14 @@ export const profile = {
     },
     {
       date: '2024',
-      title: 'Software Development Engineer (5-month internship)',
+      title: 'Software Development Engineer (6-month internship)',
       company: 'OCP · Morocco',
       mission:
         'Co-designed and built a responsive app that digitises fire safety equipment inspections, replacing paper and Excel.',
     },
     {
       date: '2023',
-      title: 'Software Development Engineer (4-month internship)',
+      title: 'Software Development Engineer (6-month internship)',
       company: 'ALTEN · Morocco',
       mission:
         'Designed and built an incident management system (reporting, tracking and resolution) with spaces for consultants and beneficiaries.',
