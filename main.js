@@ -466,16 +466,6 @@ const deskX = -0.8, deskZ = -4.35;
   pRing.rotation.x = 1.2;
   scene.add(pRing);
   planet.userData.dynamic = pRing.userData.dynamic = true;
-  // Easter egg: clicking the little planet shows the visitor counter
-  if (profile.goatcounter) {
-    planet.userData.action = 'stats';
-    // The planet is only ~10px on screen: an invisible sphere ~4.5x larger makes it easy to click
-    const hit = new THREE.Mesh(new THREE.SphereGeometry(0.6, 12, 12), new THREE.MeshBasicMaterial({ visible: false }));
-    planet.add(hit);
-    clickables.push(planet);
-    // gentle pulse of its ring so curious visitors notice it
-    animated.push((t) => pRing.scale.setScalar(1 + Math.max(0, Math.sin(t * 2.2)) * 0.12));
-  }
   animated.push((t) => { planet.rotation.y = t * 0.6; pRing.rotation.z = t * 0.4; });
 
   // Portrait au mur, au-dessus de l'étagère
@@ -505,15 +495,22 @@ const deskX = -0.8, deskZ = -4.35;
   }
 
   // Plante
-  const px = 4.3, pz = -4.3;
-  cyl(0.22, 0.17, 0.42, std(0xe8e6f0, 0.5), px, 0.21, pz);
+  const plant = new THREE.Group();
+  cyl(0.22, 0.17, 0.42, std(0xe8e6f0, 0.5), 0, 0.21, 0, plant);
   const leafMat = new THREE.MeshStandardMaterial({ color: 0x2f9e6b, roughness: 0.6, flatShading: true });
   for (let i = 0; i < 7; i++) {
     const leaf = new THREE.Mesh(new THREE.IcosahedronGeometry(0.2 + (i % 3) * 0.05, 0), leafMat);
     const a = (i / 7) * Math.PI * 2;
-    leaf.position.set(px + Math.cos(a) * 0.15, 0.6 + (i % 3) * 0.18, pz + Math.sin(a) * 0.15);
+    leaf.position.set(Math.cos(a) * 0.15, 0.6 + (i % 3) * 0.18, Math.sin(a) * 0.15);
     leaf.castShadow = true;
-    scene.add(leaf);
+    plant.add(leaf);
+  }
+  plant.position.set(4.3, 0, -4.3);
+  scene.add(plant);
+  // Easter egg: clicking the plant shows the hidden visitor counter
+  if (profile.goatcounter) {
+    plant.userData.action = 'stats';
+    clickables.push(plant);
   }
 }
 
@@ -902,7 +899,7 @@ document.title = `${profile.name} — Portfolio`;
 
 // ---------- Visitor counter (GoatCounter) ----------
 // Every visit is recorded, but the number is hidden: it only shows when someone
-// clicks the little planet on the shelf, or opens the site with ?stats in the URL.
+// clicks the plant in the corner, or opens the site with ?stats in the URL.
 const gcBase = profile.goatcounter ? `https://${profile.goatcounter}.goatcounter.com` : null;
 if (gcBase) {
   // records this visit (GoatCounter ignores localhost automatically)
@@ -932,7 +929,7 @@ async function openStats() {
   if (!gcBase) return;
   openPanel(`
     <span class="tag" style="--c:#7c3aed">Secret found</span>
-    <h2>You found the hidden planet</h2>
+    <h2>You found the secret plant</h2>
     <div class="stat"><b id="stat-n">…</b><span>visitors so far</span></div>
     <p>Thanks for exploring every corner of the room.</p>`);
   const n = await fetchVisitors();
@@ -999,6 +996,7 @@ function mergeStatic() {
       c.add(out);
     }
   }
+  scene.updateMatrixWorld(true); // merged meshes get correct world matrices before the first click
 }
 mergeStatic();
 renderer.shadowMap.needsUpdate = true; // bake shadows once
