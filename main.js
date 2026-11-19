@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { profile, projects } from './data.js';
 
 // ---------- Palette ----------
@@ -18,10 +19,19 @@ const COL = {
   light: 0xe8e6f0,
 };
 
-const neon = (hex, power = 2.4) =>
-  new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(power) });
-const std = (color, rough = 0.7, metal = 0.05) =>
-  new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal });
+// Materials are cached so identical ones are shared (fewer GPU state changes,
+// and it lets static meshes with the same material be merged into one draw call).
+const matCache = new Map();
+const neon = (hex, power = 2.4) => {
+  const key = `n|${hex}|${power}`;
+  if (!matCache.has(key)) matCache.set(key, new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(power) }));
+  return matCache.get(key);
+};
+const std = (color, rough = 0.7, metal = 0.05) => {
+  const key = `s|${color}|${rough}|${metal}`;
+  if (!matCache.has(key)) matCache.set(key, new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal }));
+  return matCache.get(key);
+};
 
 function box(w, h, d, mat, x = 0, y = 0, z = 0, parent) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -47,8 +57,24 @@ function canvasTex(w, h, draw) {
   draw(ctx, w, h);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
+  t.anisotropy = 4;
   return { tex: t, canvas: c, ctx };
+}
+// Loads an image and draws it "cover"-cropped into a small canvas texture,
+// so big screenshots never sit in GPU memory at full size.
+function loadCover(url, w, h, onReady) {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.decoding = 'async';
+  img.onload = () => {
+    const t = canvasTex(w, h, (ctx) => {
+      const s = Math.max(w / img.naturalWidth, h / img.naturalHeight);
+      const dw = img.naturalWidth * s, dh = img.naturalHeight * s;
+      ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    });
+    onReady(t.tex);
+  };
+  img.src = url;
 }
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -65,7 +91,7 @@ function makeSign({ lines, width, height, accent }) {
   box(width + t, t, 0.07, nm, 0, -height / 2, 0.01, g);
   box(t, height + t, 0.07, nm, -width / 2, 0, 0.01, g);
   box(t, height + t, 0.07, nm, width / 2, 0, 0.01, g);
-  const res = 480;
+  const res = 320;
   const tex = canvasTex(Math.round(width * res), Math.round(height * res), (ctx, w, h) => {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -94,11 +120,23 @@ function makeSign({ lines, width, height, accent }) {
 
 // ---------- Renderer / scène ----------
 const canvas = document.getElementById('scene');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// antialias is off: everything is drawn through the post-processing composer,
+// whose render targets ignore it anyway, so it only cost memory.
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+// Quality tiers, picked automatically from the measured frame rate (see adaptQuality)
+const QUALITY = [
+  { pr: Math.min(window.devicePixelRatio, 1.5), bloom: true },
+  { pr: Math.min(window.devicePixelRatio, 1.25), bloom: true },
+  { pr: 1, bloom: true },
+  { pr: 0.85, bloom: false },
+];
+let qLevel = 0;
+renderer.setPixelRatio(QUALITY[0].pr);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+// The room never moves, so shadows are computed once instead of every frame
+renderer.shadowMap.autoUpdate = false;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.1;
 
@@ -132,8 +170,8 @@ spot.castShadow = true;
 spot.shadow.mapSize.set(1024, 1024);
 spot.shadow.bias = -0.0005;
 scene.add(spot, spot.target);
-const projLight = new THREE.PointLight(0xf0abfc, 10, 8, 1.6);
-projLight.position.set(3, 3, 0);
+const projLight = new THREE.PointLight(0xf0abfc, 12, 9, 1.6);
+projLight.position.set(2.5, 3, 0);
 scene.add(projLight);
 
 // ---------- Pièce ----------
@@ -224,6 +262,7 @@ const W = 10, D = 10, H = 4.5;
   scene.add(ring);
   const ring2 = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.02, 12, 80), neon(COL.pink, 2.4));
   ring2.position.set(-3.6, 2.6, -D / 2 + 0.05);
+  ring2.userData.dynamic = true;
   scene.add(ring2);
   animated.push((t) => {
     ring2.scale.setScalar(1 + Math.sin(t * 1.5) * 0.06);
@@ -256,7 +295,10 @@ const deskX = -0.8, deskZ = -4.35;
     ['#c084fc', 'return '], ['#60a5fa', 'ship'], ['#e2e8f0', '(model);'], null,
     ['#e2e8f0', '}'], null,
   ];
-  const screen = canvasTex(768, 384, () => {});
+  // Drawn in a 768x384 coordinate space, scaled down to a 512x256 texture
+  // (less to re-upload to the GPU each time a character is typed)
+  const screen = canvasTex(512, 256, () => {});
+  screen.ctx.setTransform(512 / 768, 0, 0, 512 / 768, 0, 0);
   let typed = 0;
   const total = codeLines.reduce((n, s) => n + (s ? s[1].length : 0), 0);
   function drawCode() {
@@ -294,7 +336,7 @@ const deskX = -0.8, deskZ = -4.35;
   }
   let last = 0;
   animated.push((t) => {
-    if (t - last > 0.06) {
+    if (t - last > 0.08) {
       last = t;
       typed = typed >= total + 40 ? 0 : typed + 1;
       drawCode();
@@ -321,14 +363,9 @@ const deskX = -0.8, deskZ = -4.35;
     const ph = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.33), photoMat);
     ph.position.z = 0.011;
     pf.add(ph);
-    new THREE.TextureLoader().load(profile.photo, (tx) => {
-      tx.colorSpace = THREE.SRGBColorSpace;
-      // recadrage "cover" en portrait
-      const ar = tx.image.width / tx.image.height, target = 0.25 / 0.33;
-      if (ar > target) { tx.repeat.set(target / ar, 1); tx.offset.set((1 - target / ar) / 2, 0); }
-      else { tx.repeat.set(1, ar / target); tx.offset.set(0, (1 - ar / target) / 2); }
+    loadCover(profile.photo, 192, 256, (tx) => {
       photoMat.map = tx;
-      photoMat.color.set(0xffffff);
+      photoMat.color.setScalar(0.85);
       photoMat.needsUpdate = true;
     });
     pf.position.set(deskX - 1.0, 1.0, deskZ - 0.15);
@@ -428,7 +465,34 @@ const deskX = -0.8, deskZ = -4.35;
   pRing.position.copy(planet.position);
   pRing.rotation.x = 1.2;
   scene.add(pRing);
+  planet.userData.dynamic = pRing.userData.dynamic = true;
   animated.push((t) => { planet.rotation.y = t * 0.6; pRing.rotation.z = t * 0.4; });
+
+  // Portrait au mur, au-dessus de l'étagère
+  if (profile.portrait || profile.photo) {
+    const pw = 0.92, ph = 0.96;
+    const portrait = new THREE.Group();
+    box(pw + 0.1, ph + 0.1, 0.04, std(0x0c0a14, 0.6), 0, 0, 0, portrait);
+    const nm = neon(COL.amber, 2.4);
+    const t = 0.03;
+    box(pw + 0.13, t, 0.06, nm, 0, (ph + 0.1) / 2, 0.01, portrait);
+    box(pw + 0.13, t, 0.06, nm, 0, -(ph + 0.1) / 2, 0.01, portrait);
+    box(t, ph + 0.13, 0.06, nm, -(pw + 0.1) / 2, 0, 0.01, portrait);
+    box(t, ph + 0.13, 0.06, nm, (pw + 0.1) / 2, 0, 0.01, portrait);
+    const pMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+    const pic = new THREE.Mesh(new THREE.PlaneGeometry(pw, ph), pMat);
+    pic.position.z = 0.025;
+    portrait.add(pic);
+    loadCover(profile.portrait || profile.photo, 384, 400, (tx) => {
+      pMat.map = tx;
+      pMat.color.setScalar(0.82); // white background stays under the bloom threshold
+      pMat.needsUpdate = true;
+    });
+    portrait.position.set(sx, 3.45, -D / 2 + 0.04);
+    portrait.userData = { action: 'about', hover: true };
+    scene.add(portrait);
+    clickables.push(portrait);
+  }
 
   // Plante
   const px = 4.3, pz = -4.3;
@@ -489,9 +553,6 @@ const deskX = -0.8, deskZ = -4.35;
   win.rotation.y = Math.PI / 2;
   win.position.set(-W / 2 + 0.03, 2.3, -2.3);
   scene.add(win);
-  const winLight = new THREE.PointLight(0x8ea2ff, 6, 6, 1.6);
-  winLight.position.set(-4, 2.3, -2.3);
-  scene.add(winLight);
 
   // Tableau en liège avec post-it (compétences)
   const board = new THREE.Group();
@@ -545,8 +606,7 @@ const deskX = -0.8, deskZ = -4.35;
   t.position.set(W / 2 - 0.05, 3.82, 0);
   scene.add(t);
 
-  const loader = new THREE.TextureLoader();
-  const cols = [-3.45, -1.15, 1.15, 3.45];
+  const cols =[-3.45, -1.15, 1.15, 3.45];
   const rows = [2.75, 1.35];
   projects.slice(0, 8).forEach((p, i) => {
     const g = new THREE.Group();
@@ -561,11 +621,8 @@ const deskX = -0.8, deskZ = -4.35;
     const tex = canvasTex(640, 376, (ctx, w, h) => drawProjectCard(ctx, w, h, p));
     const mat = new THREE.MeshBasicMaterial({ map: tex.tex });
     mat.color.setScalar(0.78); // reste sous le seuil du bloom
-    if (p.image) loader.load(p.image, (img) => {
-      img.colorSpace = THREE.SRGBColorSpace;
-      const ar = img.image.width / img.image.height, target = fw / fh;
-      if (ar > target) { img.repeat.set(target / ar, 1); img.offset.set((1 - target / ar) / 2, 0); }
-      else { img.repeat.set(1, ar / target); img.offset.set(0, (1 - ar / target) / 2); }
+    if (p.image) loadCover(p.image, 640, 376, (img) => {
+      tex.tex.dispose(); // free the placeholder card
       mat.map = img;
       mat.needsUpdate = true;
     });
@@ -621,7 +678,7 @@ function drawProjectCard(ctx, w, h, p) {
 
 // ---------- Particules ----------
 {
-  const n = 260;
+  const n = 150;
   const pos = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) {
     pos[i * 3] = (Math.random() - 0.5) * W;
@@ -709,9 +766,11 @@ const ease = (t) => -(Math.cos(Math.PI * t) - 1) / 2;
 // Parallaxe souris
 const mouse = new THREE.Vector2();
 const parallax = new THREE.Vector2();
+let pointerDirty = false; // hover ray is only cast when the mouse or camera moved
 window.addEventListener('pointermove', (e) => {
   mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
   mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  pointerDirty = true;
 });
 
 // Survol et clic
@@ -866,10 +925,91 @@ function onResize() {
 window.addEventListener('resize', onResize);
 onResize();
 
+// ---------- Performance ----------
+// Merge every static mesh that shares a material into a single mesh
+// (per clickable group, so hover/click still work). ~225 draw calls -> far fewer.
+function mergeStatic() {
+  scene.updateMatrixWorld(true);
+  const containers = new Map();
+  scene.traverse((o) => {
+    if (!o.isMesh || o.userData.dynamic || Array.isArray(o.material)) return;
+    let c = o.parent;
+    while (c && c !== scene && !c.userData.action) {
+      if (c.userData.dynamic) return;
+      c = c.parent;
+    }
+    if (!containers.has(c)) containers.set(c, new Map());
+    const byMat = containers.get(c);
+    if (!byMat.has(o.material)) byMat.set(o.material, []);
+    byMat.get(o.material).push(o);
+  });
+  const inv = new THREE.Matrix4();
+  const m = new THREE.Matrix4();
+  for (const [c, byMat] of containers) {
+    inv.copy(c.matrixWorld).invert();
+    for (const [mat, list] of byMat) {
+      if (list.length < 2) continue;
+      const geos = list.map((mesh) => {
+        const g = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+        for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+        g.applyMatrix4(m.multiplyMatrices(inv, mesh.matrixWorld));
+        return g;
+      });
+      const merged = mergeGeometries(geos, false);
+      geos.forEach((g) => g.dispose());
+      if (!merged) continue;
+      const out = new THREE.Mesh(merged, mat);
+      out.castShadow = list.some((x) => x.castShadow);
+      out.receiveShadow = list.some((x) => x.receiveShadow);
+      for (const mesh of list) {
+        mesh.parent.remove(mesh);
+        mesh.geometry.dispose();
+      }
+      c.add(out);
+    }
+  }
+}
+mergeStatic();
+renderer.shadowMap.needsUpdate = true; // bake shadows once
+
+function applyQuality() {
+  const q = QUALITY[qLevel];
+  renderer.setPixelRatio(q.pr);
+  composer.setPixelRatio(q.pr);
+  bloom.enabled = q.bloom;
+  onResize();
+}
+applyQuality();
+
+// Lowers resolution, then bloom, if the device can't keep ~45 fps
+let sampleTime = 0, sampleFrames = 0, measureFrom = Infinity;
+function adaptQuality(dt) {
+  if (performance.now() < measureFrom || qLevel >= QUALITY.length - 1) return;
+  sampleTime += dt;
+  sampleFrames++;
+  if (sampleTime < 2) return;
+  const avg = sampleTime / sampleFrames;
+  sampleTime = 0;
+  sampleFrames = 0;
+  if (avg > 1 / 45) {
+    qLevel++;
+    applyQuality();
+    measureFrom = performance.now() + 1000;
+  }
+}
+
+if (location.search.includes('debug')) window.__three = { renderer, scene, camera, composer, quality: () => qLevel };
+
+renderer.compile(scene, camera); // compile shaders up front so entering doesn't stutter
+let entered = false;
+const hoverScale = new THREE.Vector3(1.04, 1.04, 1.04);
 const clock = new THREE.Clock();
 function frame() {
+  requestAnimationFrame(frame);
   const dt = Math.min(clock.getDelta(), 0.05);
   const t = clock.elapsedTime;
+  if (!entered) return; // nothing to draw behind the opaque intro screen
+  adaptQuality(dt);
 
   parallax.lerp(mouse, 0.05);
   if (tween) {
@@ -897,16 +1037,18 @@ function frame() {
 
   for (const fn of animated) fn(t, dt);
 
-  const h = pick();
-  if (h !== hovered) {
-    if (hovered) hovered.scale.setScalar(1);
-    hovered = h;
-    canvas.style.cursor = h ? 'pointer' : 'default';
+  if (pointerDirty || tween) {
+    pointerDirty = false;
+    const h = pick();
+    if (h !== hovered) {
+      if (hovered) hovered.scale.setScalar(1);
+      hovered = h;
+      canvas.style.cursor = h ? 'pointer' : 'default';
+    }
   }
-  if (hovered) hovered.scale.lerp(new THREE.Vector3(1.04, 1.04, 1.04), 0.2);
+  if (hovered) hovered.scale.lerp(hoverScale, 0.2);
 
   composer.render();
-  requestAnimationFrame(frame);
 }
 frame();
 
@@ -914,5 +1056,8 @@ frame();
 document.getElementById('loader').classList.add('hide');
 document.getElementById('enter').addEventListener('click', () => {
   document.getElementById('intro').classList.add('hide');
+  entered = true;
+  clock.getDelta();
+  measureFrom = performance.now() + 2500; // let the first frames settle before judging speed
   goTo('accueil');
 });

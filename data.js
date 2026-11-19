@@ -9,7 +9,7 @@ export const profile = {
   name: 'Ahmed Bourazza',
   shortName: 'Ahmed',
   role: 'Software Engineer · AI & Full Stack',
-  photo: IMG + 'ahmed.jpg',
+  photo: 'assets/ahmed.jpg',
   status: 'Available now for a full-time role anywhere in France',
   intro:
     'Software engineer and top of my class, selected for a double engineering degree at ENSIM (France). ' +
