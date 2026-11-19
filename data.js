@@ -62,6 +62,10 @@ export const profile = {
   cv: 'https://ahmedbourazza.github.io/CV-Ahmed-Bourazza.pdf',
   email: 'ahmed.bourazza.pro@gmail.com',
   phone: '+33 7 51 56 87 31',
+  // Contact form: messages are forwarded to your inbox by FormSubmit (formsubmit.co).
+  // After the activation email, you can replace the address below with the random
+  // alias FormSubmit gives you, so your email isn't visible in the code.
+  contactForm: 'https://formsubmit.co/ajax/ahmed.bourazza.pro@gmail.com',
   // Visitor counter: your GoatCounter code (the "xxx" in xxx.goatcounter.com).
   // Leave empty to hide the counter.
   goatcounter: 'ahmedbourazza',

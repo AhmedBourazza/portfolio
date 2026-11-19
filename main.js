@@ -814,6 +814,8 @@ window.addEventListener('wheel', (e) => {
   step(e.deltaY > 0 ? 1 : -1);
 }, { passive: true });
 window.addEventListener('keydown', (e) => {
+  // don't move the camera while someone is typing in the contact form
+  if (e.target.closest && e.target.closest('input, textarea')) return;
   if (e.key === 'ArrowRight' || e.key === 'ArrowDown') step(1);
   if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') step(-1);
   if (e.key === 'Escape') closePanel();
@@ -878,8 +880,20 @@ function contactHTML() {
       <li><span>Email</span><a href="mailto:${esc(profile.email)}">${esc(profile.email)}</a></li>
       ${profile.phone ? `<li><span>Phone</span><a href="tel:${esc(profile.phone.replace(/\s/g, ''))}">${esc(profile.phone)}</a></li>` : ''}
     </ul>
+    ${profile.contactForm ? `
+    <form id="contact-form" class="contact-form" novalidate>
+      <h3>Send me a message</h3>
+      <label>Name<input name="name" autocomplete="name" placeholder="Jane Smith" /></label>
+      <small class="field-error" data-err="name"></small>
+      <label>Email<input name="email" type="email" autocomplete="email" placeholder="jane@company.com" /></label>
+      <small class="field-error" data-err="email"></small>
+      <label>Message<textarea name="message" rows="4" placeholder="Tell me about the role or project"></textarea></label>
+      <small class="field-error" data-err="message"></small>
+      <input type="text" name="_honey" class="honey" tabindex="-1" autocomplete="off" aria-hidden="true" />
+      <button type="submit" class="btn primary">Send message</button>
+      <p class="form-status" role="status"></p>
+    </form>` : ''}
     <div class="actions">
-      <a class="btn primary" href="mailto:${esc(profile.email)}">Email me</a>
       <a class="btn" href="${esc(profile.socials.linkedin)}" target="_blank" rel="noopener">LinkedIn</a>
       ${profile.cv ? `<a class="btn" href="${esc(profile.cv)}" target="_blank" rel="noopener">Download CV</a>` : ''}
     </div>`;
@@ -887,6 +901,61 @@ function contactHTML() {
 panelBody.addEventListener('click', (e) => {
   const b = e.target.closest('[data-go]');
   if (b) goTo(b.dataset.go);
+});
+
+// ---------- Contact form ----------
+panelBody.addEventListener('input', (e) => {
+  const err = e.target.name && panelBody.querySelector(`[data-err="${e.target.name}"]`);
+  if (err) err.textContent = '';
+});
+panelBody.addEventListener('submit', async (e) => {
+  const f = e.target.closest('#contact-form');
+  if (!f) return;
+  e.preventDefault();
+  const d = Object.fromEntries(new FormData(f));
+  const name = (d.name || '').trim(), email = (d.email || '').trim(), message = (d.message || '').trim();
+  const errors = {};
+  if (!name) errors.name = 'Enter your name.';
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.email = 'Enter a valid email address.';
+  if (message.length < 10) errors.message = 'Write a message of at least 10 characters.';
+  f.querySelectorAll('.field-error').forEach((el) => (el.textContent = errors[el.dataset.err] || ''));
+  const status = f.querySelector('.form-status');
+  status.className = 'form-status';
+  status.textContent = '';
+  if (Object.keys(errors).length) {
+    f.querySelector(`[name="${Object.keys(errors)[0]}"]`).focus();
+    return;
+  }
+  if (d._honey) return; // bot filled the hidden field
+  const btn = f.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    const r = await fetch(profile.contactForm, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        name,
+        email,
+        message,
+        _subject: `Portfolio: new message from ${name}`,
+        _replyto: email,
+        _template: 'table',
+        _captcha: 'false',
+      }),
+    });
+    const res = await r.json().catch(() => ({}));
+    if (!r.ok || String(res.success) === 'false') throw new Error(res.message || 'send failed');
+    f.reset();
+    status.classList.add('ok');
+    status.textContent = "Thanks, your message has been sent. I'll get back to you soon.";
+  } catch {
+    status.classList.add('err');
+    status.innerHTML = `Your message couldn't be sent. Email me directly at <a href="mailto:${esc(profile.email)}">${esc(profile.email)}</a>.`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send message';
+  }
 });
 document.querySelectorAll('.nav button').forEach((b) => b.addEventListener('click', () => goTo(b.dataset.go)));
 
@@ -1027,7 +1096,7 @@ function adaptQuality(dt) {
   }
 }
 
-if (location.search.includes('debug')) window.__three = { renderer, scene, camera, composer, quality: () => qLevel };
+if (location.search.includes('debug')) window.__three = { renderer, scene, camera, composer, quality: () => qLevel, ui: { openPanel, contactHTML } };
 
 renderer.compile(scene, camera); // compile shaders up front so entering doesn't stutter
 let entered = false;
