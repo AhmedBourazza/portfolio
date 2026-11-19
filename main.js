@@ -466,6 +466,11 @@ const deskX = -0.8, deskZ = -4.35;
   pRing.rotation.x = 1.2;
   scene.add(pRing);
   planet.userData.dynamic = pRing.userData.dynamic = true;
+  // Easter egg: clicking the little planet shows the visitor counter
+  if (profile.goatcounter) {
+    planet.userData.action = 'stats';
+    clickables.push(planet);
+  }
   animated.push((t) => { planet.rotation.y = t * 0.6; pRing.rotation.z = t * 0.4; });
 
   // Portrait au mur, au-dessus de l'étagère
@@ -792,6 +797,8 @@ canvas.addEventListener('click', () => {
     openPanel(projectHTML(projects[o.userData.index]));
   } else if (o.userData.action === 'about') {
     goTo('apropos');
+  } else if (o.userData.action === 'stats') {
+    openStats();
   }
 });
 
@@ -889,24 +896,43 @@ document.getElementById('s-mail').href = `mailto:${profile.email}`;
 document.title = `${profile.name} — Portfolio`;
 
 // ---------- Visitor counter (GoatCounter) ----------
-if (profile.goatcounter) {
-  const base = `https://${profile.goatcounter}.goatcounter.com`;
+// Every visit is recorded, but the number is hidden: it only shows when someone
+// clicks the little planet on the shelf, or opens the site with ?stats in the URL.
+const gcBase = profile.goatcounter ? `https://${profile.goatcounter}.goatcounter.com` : null;
+if (gcBase) {
   // records this visit (GoatCounter ignores localhost automatically)
   const s = document.createElement('script');
   s.async = true;
   s.src = 'https://gc.zgo.at/count.js';
-  s.dataset.goatcounter = `${base}/count`;
+  s.dataset.goatcounter = `${gcBase}/count`;
   document.head.appendChild(s);
-  // shows the total number of visits for the whole site
-  fetch(`${base}/counter/TOTAL.json`)
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => {
-      const n = d && (d.count_unique ?? d.count);
-      if (n == null) return;
-      document.getElementById('visits-count').textContent = n;
-      document.getElementById('visits').hidden = false;
-    })
-    .catch(() => {});
+}
+async function fetchVisitors() {
+  // Counter for this page's path ("TOTAL" is only refreshed later by GoatCounter)
+  const path = location.pathname.replace(/index\.html$/, '');
+  let zero = null;
+  for (const p of [path, 'TOTAL']) {
+    try {
+      const r = await fetch(`${gcBase}/counter/${encodeURIComponent(p)}.json`);
+      if (!r.ok) continue;
+      const d = await r.json();
+      const n = d.count_unique ?? d.count;
+      if (n != null && n !== '0') return n;
+      if (n === '0') zero = '0';
+    } catch {}
+  }
+  return zero;
+}
+async function openStats() {
+  if (!gcBase) return;
+  openPanel(`
+    <span class="tag" style="--c:#7c3aed">Secret found</span>
+    <h2>You found the hidden planet</h2>
+    <div class="stat"><b id="stat-n">…</b><span>visitors so far</span></div>
+    <p>Thanks for exploring every corner of the room.</p>`);
+  const n = await fetchVisitors();
+  const el = document.getElementById('stat-n');
+  if (el) el.textContent = n ?? 'unavailable';
 }
 
 // ---------- Boucle ----------
@@ -1060,4 +1086,5 @@ document.getElementById('enter').addEventListener('click', () => {
   clock.getDelta();
   measureFrom = performance.now() + 2500; // let the first frames settle before judging speed
   goTo('accueil');
+  if (new URLSearchParams(location.search).has('stats')) setTimeout(openStats, 1800);
 });
